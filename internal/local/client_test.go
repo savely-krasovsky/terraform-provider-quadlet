@@ -135,7 +135,7 @@ func TestLocalCommandsAndCancellation(t *testing.T) {
 func TestLocalLockCancellationAndReacquisition(t *testing.T) {
 	first, second := session(t), session(t)
 	name := filepath.Join(t.TempDir(), "config.lock")
-	lease, unlock, err := first.Lock(t.Context(), name)
+	lease, unlock, err := first.Lock(t.Context(), name, true)
 	require.NoError(t, err)
 
 	defer unlock()
@@ -143,7 +143,7 @@ func TestLocalLockCancellationAndReacquisition(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 75*time.Millisecond)
 	defer cancel()
 
-	_, _, err = second.Lock(ctx, name)
+	_, _, err = second.Lock(ctx, name, true)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	first.Close()
 
@@ -154,7 +154,7 @@ func TestLocalLockCancellationAndReacquisition(t *testing.T) {
 	}
 
 	third := session(t)
-	_, release, err := third.Lock(t.Context(), name)
+	_, release, err := third.Lock(t.Context(), name, true)
 	require.NoError(t, err)
 	release()
 	require.ErrorIs(t, third.CheckPath(name), context.Canceled)

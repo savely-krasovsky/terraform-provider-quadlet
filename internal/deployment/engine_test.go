@@ -427,7 +427,7 @@ func TestEngineWithLocalTransport(t *testing.T) {
 
 	defer client.Close()
 
-	ctx, release, err := client.Lock(t.Context(), path.Join(engine.Paths.State, "config.lock"))
+	ctx, release, err := client.Lock(t.Context(), path.Join(engine.Paths.State, "config.lock"), true)
 	require.NoError(t, err)
 
 	defer release()
@@ -513,7 +513,7 @@ func TestIndependentStacksWithHostGenerator(t *testing.T) {
 
 	defer client.Close()
 
-	ctx, release, err := client.Lock(t.Context(), path.Join(engine.Paths.State, "config.lock"))
+	ctx, release, err := client.Lock(t.Context(), path.Join(engine.Paths.State, "config.lock"), true)
 	require.NoError(t, err)
 
 	defer release()

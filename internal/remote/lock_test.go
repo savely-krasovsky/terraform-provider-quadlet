@@ -27,7 +27,7 @@ func TestHostLockSerializesIndependentConnections(t *testing.T) {
 	defer first.Close()
 
 	filename := filepath.Join(t.TempDir(), "config.lock")
-	_, release, err := first.Lock(ctx, filename)
+	_, release, err := first.Lock(ctx, filename, true)
 	require.NoError(t, err)
 
 	defer release()
@@ -40,7 +40,7 @@ func TestHostLockSerializesIndependentConnections(t *testing.T) {
 	waiting, stop := context.WithTimeout(ctx, 150*time.Millisecond)
 	defer stop()
 
-	_, _, err = second.Lock(waiting, filename)
+	_, _, err = second.Lock(waiting, filename, true)
 	require.Error(t, err)
 	require.ErrorIs(t, waiting.Err(), context.DeadlineExceeded)
 
@@ -55,7 +55,7 @@ func TestHostLockSerializesIndependentConnections(t *testing.T) {
 	_, err = unrelated.Run(ctx, host.Command{Name: "true"})
 	require.NoError(t, err)
 
-	_, unlock, err := unrelated.Lock(ctx, filename)
+	_, unlock, err := unrelated.Lock(ctx, filename, true)
 	require.NoError(t, err)
 	unlock()
 }
@@ -72,7 +72,7 @@ func TestLostConnectionReleasesTheHostLock(t *testing.T) {
 	defer first.Close()
 
 	filename := filepath.Join(t.TempDir(), "config.lock")
-	lease, release, err := first.Lock(ctx, filename)
+	lease, release, err := first.Lock(ctx, filename, true)
 	require.NoError(t, err)
 
 	defer release()
@@ -90,7 +90,7 @@ func TestLostConnectionReleasesTheHostLock(t *testing.T) {
 
 	defer second.Close()
 
-	_, unlock, err := second.Lock(ctx, filename)
+	_, unlock, err := second.Lock(ctx, filename, true)
 	require.NoError(t, err)
 	unlock()
 }
@@ -118,14 +118,82 @@ func TestSSHAndLocalUseTheSameHostLock(t *testing.T) {
 			first, second = localHost, ssh
 		}
 
-		_, release, err := first.Lock(t.Context(), name)
+		_, release, err := first.Lock(t.Context(), name, true)
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-		_, _, err = second.Lock(ctx, name)
+		_, _, err = second.Lock(ctx, name, true)
 		require.Error(t, err)
 		require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 		cancel()
 		release()
 	}
+}
+
+func TestSSHAndLocalShareReadLeasesAndExcludeWriters(t *testing.T) {
+	config := testServer(t)
+	name := filepath.Join(t.TempDir(), "config.lock")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	localReader, err := local.Connect(ctx)
+	require.NoError(t, err)
+
+	defer localReader.Close()
+
+	_, releaseLocal, err := localReader.Lock(ctx, name, false)
+	require.NoError(t, err)
+
+	defer releaseLocal()
+
+	sshReader, err := Connect(ctx, config)
+	require.NoError(t, err)
+
+	defer sshReader.Close()
+
+	_, releaseSSH, err := sshReader.Lock(ctx, name, false)
+	require.NoError(t, err)
+
+	defer releaseSSH()
+
+	for _, release := range []func(){releaseSSH, releaseLocal} {
+		writer, err := local.Connect(ctx)
+		require.NoError(t, err)
+
+		wait, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		_, unlock, err := writer.Lock(wait, name, true)
+
+		cancel()
+
+		if unlock != nil {
+			unlock()
+		}
+
+		writer.Close()
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		release()
+	}
+
+	writer, err := local.Connect(ctx)
+	require.NoError(t, err)
+
+	defer writer.Close()
+
+	_, releaseWriter, err := writer.Lock(ctx, name, true)
+	require.NoError(t, err)
+
+	defer releaseWriter()
+
+	reader, err := Connect(ctx, config)
+	require.NoError(t, err)
+
+	defer reader.Close()
+
+	wait, stop := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer stop()
+
+	_, _, err = reader.Lock(wait, name, false)
+	require.Error(t, err)
+	require.ErrorIs(t, wait.Err(), context.DeadlineExceeded)
 }

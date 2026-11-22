@@ -11,8 +11,8 @@ import (
 	"github.com/gofrs/flock"
 )
 
-// Lock uses the same kernel flock as SSH, so both transports share the lease.
-func (c *Client) Lock(ctx context.Context, name string) (context.Context, func(), error) {
+// Lock uses the same kernel flock as SSH.
+func (c *Client) Lock(ctx context.Context, name string, exclusive bool) (context.Context, func(), error) {
 	if err := c.CheckPath(name); err != nil {
 		return nil, nil, err
 	}
@@ -29,14 +29,28 @@ func (c *Client) Lock(ctx context.Context, name string) (context.Context, func()
 		_ = file.Close()
 	})
 
-	locked, err := file.TryLockContext(lease, 25*time.Millisecond)
+	const retryDelay = 25 * time.Millisecond
+
+	var (
+		locked bool
+		err    error
+	)
+
+	if exclusive {
+		locked, err = file.TryLockContext(lease, retryDelay)
+	} else {
+		locked, err = file.TryRLockContext(lease, retryDelay)
+	}
+
 	if err != nil {
 		release()
+
 		return nil, nil, err
 	}
 
 	if !locked {
 		release()
+
 		return nil, nil, context.Canceled
 	}
 

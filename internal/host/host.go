@@ -50,14 +50,14 @@ type Files interface {
 	Sync(context.Context, string) error
 }
 
-// Session belongs to one provider operation. Lock releases or loses the lease
-// by cancelling its context and closing the session; a session must not be shared
-// with another resource. Implementations acquire file services lazily.
+// Session belongs to one provider operation. Lock is exclusive for writes and
+// shared for reads. Releasing or losing the lease cancels its context and
+// closes the session. Implementations acquire file services lazily.
 type Session interface {
 	Files
 	Runner
 	DialContext(context.Context, string, string) (net.Conn, error)
-	Lock(context.Context, string) (context.Context, func(), error)
+	Lock(ctx context.Context, name string, exclusive bool) (context.Context, func(), error)
 	Close()
 }
 

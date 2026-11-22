@@ -19,7 +19,6 @@ import (
 )
 
 // access composes feature adapters over one session per resource operation.
-// No connection or lock is shared with another resource.
 type access struct {
 	open         host.Open
 	timeout      time.Duration
@@ -71,9 +70,9 @@ func (a *access) secrets(ctx context.Context, fn func(context.Context, secretCli
 	})
 }
 
-// engine serializes deployments of this host user, including refresh. The host
-// lock and cancellation contract are identical for SSH and local sessions.
-func (a *access) engine(ctx context.Context, manageUnits bool, fn func(context.Context, deployment.Engine) error) error {
+// engine lets refresh and import read concurrently. Writes take an exclusive
+// lease on the same lock file so readers see a complete snapshot.
+func (a *access) engine(ctx context.Context, write bool, fn func(context.Context, deployment.Engine) error) error {
 	return a.withHost(ctx, func(ctx context.Context, session host.Session) error {
 		dirs, err := systemd.UserDirectories(ctx, session)
 		if err != nil {
@@ -83,7 +82,7 @@ func (a *access) engine(ctx context.Context, manageUnits bool, fn func(context.C
 		paths := deployment.Paths{Config: dirs.Config, State: path.Join(dirs.State, "terraform-quadlet")}
 
 		engine := deployment.Engine{Host: session, Paths: paths, Quadlets: quadlet.Validator{Host: session}}
-		if manageUnits {
+		if write {
 			if err := deployment.Prepare(ctx, session, paths); err != nil {
 				return err
 			}
@@ -93,13 +92,13 @@ func (a *access) engine(ctx context.Context, manageUnits bool, fn func(context.C
 			return err
 		}
 
-		ctx, release, err := session.Lock(ctx, path.Join(paths.State, "config.lock"))
+		ctx, release, err := session.Lock(ctx, path.Join(paths.State, "config.lock"), write)
 		if err != nil {
 			return err
 		}
 		defer release()
 
-		if manageUnits {
+		if write {
 			uid, err := host.UserID(ctx, session)
 			if err != nil {
 				return err

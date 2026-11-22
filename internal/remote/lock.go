@@ -14,8 +14,8 @@ import (
 )
 
 // Lock dedicates this connection to one operation under a remote kernel flock.
-// Releasing or losing the lock closes SSH/SFTP and cancels the operation.
-func (c *Client) Lock(ctx context.Context, filename string) (context.Context, func(), error) {
+// Releasing or losing either lease closes SSH/SFTP and cancels the operation.
+func (c *Client) Lock(ctx context.Context, filename string, exclusive bool) (context.Context, func(), error) {
 	if err := c.CheckPath(filename); err != nil {
 		return nil, nil, err
 	}
@@ -55,9 +55,14 @@ func (c *Client) Lock(ctx context.Context, filename string) (context.Context, fu
 
 	session.Stderr = io.Discard
 
+	flag := "--shared"
+	if exclusive {
+		flag = "--exclusive"
+	}
+
 	command := host.Command{
 		Name: "flock",
-		Args: []string{"--exclusive", "--no-fork", filename, "sh", "-c", "printf 'locked\\n'; cat >/dev/null"},
+		Args: []string{flag, "--no-fork", filename, "sh", "-c", "printf 'locked\\n'; cat >/dev/null"},
 	}
 	if err := session.Start(shell(command)); err != nil {
 		release()
